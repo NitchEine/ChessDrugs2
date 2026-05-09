@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crown of Variants: Network Edition</title>
+    <!-- PeerJS for P2P Local/Web Multiplayer -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --accent: #fbbf24;
+            --light-sq: #e2e8f0;
+            --dark-sq: #475569;
+            --move: #4ade80;
+            --take: #f87171;
+            --selected: #6366f1;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background-color: var(--bg);
+            color: #f1f5f9;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        /* Lobby & UI */
+        .lobby-bar {
+            background: var(--panel);
+            padding: 15px 25px;
+            border-radius: 12px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            border: 1px solid #334155;
+        }
+
+        input {
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: white;
+        }
+
+        button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            background: var(--accent);
+            color: #000;
+            transition: 0.2s;
+        }
+
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        button.secondary { background: #64748b; color: white; }
+
+        .game-layout {
+            display: flex;
+            gap: 30px;
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        /* Board Styling */
+        #board-container { position: relative; }
+        #board {
+            display: grid;
+            grid-template-columns: repeat(8, 70px);
+            grid-template-rows: repeat(8, 70px);
+            border: 10px solid var(--panel);
+            border-radius: 8px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+
+        .square {
+            width: 70px;
+            height: 70px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 50px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .light { background-color: var(--light-sq); }
+        .dark { background-color: var(--dark-sq); }
+        .selected { background-color: var(--selected) !important; }
+        .valid-move::after {
+            content: ''; width: 18px; height: 18px; background: rgba(0,0,0,0.2); border-radius: 50%;
+        }
+        .valid-capture { background-color: var(--take) !important; }
+
+        /* Piece Visuals */
+        .piece { 
+            z-index: 10; 
+            transition: transform 0.2s; 
+            user-select: none;
+            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.4));
+        }
+        .piece.w { color: #ffffff; }
+        .piece.b { color: #000000; }
+        .piece.special { color: var(--accent); }
+
+        /* Side Panels */
+        .info-panel {
+            flex: 1;
+            background: var(--panel);
+            padding: 20px;
+            border-radius: 12px;
+            height: fit-content;
+        }
+
+        .armory {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+        }
+
+        .armory-item {
+            text-align: center;
+            padding: 5px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            border-radius: 4px;
+        }
+        .armory-item:hover { background: rgba(255,255,255,0.1); }
+        .armory-item.active { border-color: var(--accent); background: rgba(251, 191, 36, 0.2); }
+
+        .status-box {
+            font-size: 20px;
+            text-align: center;
+            padding: 15px;
+            margin-bottom: 20px;
+            background: #0f172a;
+            border-radius: 8px;
+            border-left: 5px solid var(--accent);
+        }
+
+        .badge {
+            font-size: 10px;
+            text-transform: uppercase;
+            background: #475569;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="lobby-bar">
+        <div>
+            <strong>P2P Multiplayer:</strong>
+            <button id="hostBtn" onclick="hostGame()">Host Game</button>
+        </div>
+        <div style="border-left: 1px solid #444; padding-left: 20px;">
+            <input type="text" id="joinId" placeholder="Enter Room ID...">
+            <button onclick="joinGame()" class="secondary">Join Room</button>
+        </div>
+        <div id="peerStatus" style="font-size: 12px; color: #94a3b8;">Status: Offline</div>
+    </div>
+
+    <div class="game-layout">
+        <!-- Main Board -->
+        <div class="main-column">
+            <div id="status" class="status-box">White's Turn</div>
+            <div id="board-container">
+                <div id="board"></div>
+            </div>
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+                <select id="modeSelect" onchange="resetLocal()">
+                    <option value="vanguard">Mode: Vanguard</option>
+                    <option value="swarm">Mode: Archangel Swarm</option>
+                    <option value="stampede">Mode: Pegasus Stampede</option>
+                </select>
+                <button onclick="resetLocal()" class="secondary">Reset Board</button>
+            </div>
+        </div>
+
+        <!-- Info & Sandbox -->
+        <div class="info-panel">
+            <h3>Sandbox & Intel</h3>
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                <input type="checkbox" id="sandboxToggle" onchange="toggleSandbox()"> 
+                <span style="font-weight: bold; color: var(--accent);">Enable Sandbox Mode</span>
+            </label>
+            
+            <div id="sandboxTools" style="display: none;">
+                <p style="font-size: 12px; margin-top: 10px;">Select a piece, then click the board:</p>
+                <div class="armory">
+                    <div class="armory-item active" onclick="setBrush('O')"><span>♚</span><br><small>Overlord</small></div>
+                    <div class="armory-item" onclick="setBrush('A')"><span>♛</span><br><small>Archangel</small></div>
+                    <div class="armory-item" onclick="setBrush('P')"><span>♜</span><br><small>Paladin</small></div>
+                    <div class="armory-item" onclick="setBrush('I')"><span>♝</span><br><small>Inquisitor</small></div>
+                    <div class="armory-item" onclick="setBrush('G')"><span>♞</span><br><small>Pegasus</small></div>
+                    <div class="armory-item" onclick="setBrush('M')"><span>♟</span><br><small>Pikeman</small></div>
+                    <div class="armory-item" onclick="setBrush('')" style="color:red;"><span>✖</span><br><small>Eraser</small></div>
+                    <div class="armory-item" onclick="toggleBrushColor()" id="colorIndicator"><span>W</span><br><small>Color</small></div>
+                </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #334155; margin: 20px 0;">
+            
+            <div id="pieceIntel">
+                <div class="badge">Guide</div>
+                <div id="intelTitle" style="font-weight: bold; color: var(--accent); font-size: 18px;">Welcome</div>
+                <p id="intelBody" style="font-size: 14px; color: #94a3b8;">Click a piece on the board to see its unique variant movement rules.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const boardEl = document.getElementById('board');
+        const statusEl = document.getElementById('status');
+        const peerStatus = document.getElementById('peerStatus');
+        const modeSelect = document.getElementById('modeSelect');
+
+        // GAME STATE
+        let board = [];
+        let turn = 'w';
+        let selectedSquare = null;
+        let validMoves = [];
+        let winner = null;
+        
+        // SANDBOX STATE
+        let isSandbox = false;
+        let brushPiece = 'O';
+        let brushColor = 'w';
+
+        // NETWORK STATE
+        let peer = null;
+        let conn = null;
+        let isHost = false;
+
+        const PIECES = {
+            'o': { sym: '♚', name: 'Overlord', desc: 'King + 2-step orthogonal leaps. Mortal: if he dies, game over.' },
+            'a': { sym: '♛', name: 'Archangel', desc: 'Bishop + Knight. The ultimate hybrid predator.' },
+            'p': { sym: '♜', name: 'Paladin', desc: 'Rook + 1-step diagonal steps. Unstoppable fortress.' },
+            'i': { sym: '♝', name: 'Inquisitor', desc: 'Bishop + 1-step orthogonal steps. Expert at area control.' },
+            'g': { sym: '♞', name: 'Pegasus', desc: 'Knight + 3-step long leaps. Can jump over any defense.' },
+            'm': { sym: '♟', name: 'Pikeman', desc: 'Moves/Takes 1 step Forward or Forward-Diagonal. Promotes to Archangel.' }
+        };
+
+        const MODES = {
+            'vanguard': [
+                ['p','g','i','a','o','i','g','p'],['m','m','m','m','m','m','m','m'],
+                ['','','','','','','',''],['','','','','','','',''],
+                ['','','','','','','',''],['','','','','','','',''],
+                ['M','M','M','M','M','M','M','M'],['P','G','I','A','O','I','G','P']
+            ],
+            'swarm': [
+                ['a','a','a','a','o','a','a','a'],['m','m','m','m','m','m','m','m'],
+                ['','','','','','','',''],['','','','','','','',''],
+                ['','','','','','','',''],['','','','','','','',''],
+                ['M','M','M','M','M','M','M','M'],['A','A','A','A','O','A','A','A']
+            ],
+            'stampede': [
+                ['g','g','g','a','o','g','g','g'],['m','m','m','m','m','m','m','m'],
+                ['','','','','','','',''],['','','','','','','',''],
+                ['','','','','','','',''],['','','','','','','',''],
+                ['M','M','M','M','M','M','M','M'],['G','G','G','A','O','G','G','G']
+            ]
+        };
+
+        // --- CORE LOGIC ---
+
+        function initGame(boardData = null) {
+            if (boardData) {
+                board = JSON.parse(JSON.stringify(boardData));
+            } else {
+                board = JSON.parse(JSON.stringify(MODES[modeSelect.value]));
+            }
+            turn = 'w';
+            winner = null;
+            selectedSquare = null;
+            validMoves = [];
+            updateStatus();
+            renderBoard();
+        }
+
+        function resetLocal() {
+            initGame();
+            syncData({ type: 'init', mode: modeSelect.value });
+        }
+
+        function getMoves(r, c, bState = board) {
+            const piece = bState[r][c];
+            if (!piece) return [];
+            const color = piece === piece.toUpperCase() ? 'w' : 'b';
+            const type = piece.toLowerCase();
+            const moves = [];
+
+            const addSlide = (dr, dc) => {
+                let nr = r + dr, nc = c + dc;
+                while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (bState[nr][nc] === '') moves.push({r: nr, c: nc, cap: false});
+                    else {
+                        if ((bState[nr][nc] === bState[nr][nc].toUpperCase() ? 'w' : 'b') !== color) moves.push({r: nr, c: nc, cap: true});
+                        break;
+                    }
+                    nr += dr; nc += dc;
+                }
+            };
+
+            const addStep = (dr, dc) => {
+                let nr = r + dr, nc = c + dc;
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    const target = bState[nr][nc];
+                    if (target === '') moves.push({r: nr, c: nc, cap: false});
+                    else if ((target === target.toUpperCase() ? 'w' : 'b') !== color) moves.push({r: nr, c: nc, cap: true});
+                }
+            };
+
+            if (type === 'o') { // Overlord
+                [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(d => addStep(d[0], d[1]));
+                [[-2,0],[2,0],[0,-2],[0,2]].forEach(d => addStep(d[0], d[1]));
+            } else if (type === 'a') { // Archangel
+                [[-1,-1],[1,1],[-1,1],[1,-1]].forEach(d => addSlide(d[0], d[1]));
+                [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(d => addStep(d[0], d[1]));
+            } else if (type === 'p') { // Paladin
+                [[-1,0],[1,0],[0,-1],[0,1]].forEach(d => addSlide(d[0], d[1]));
+                [[-1,-1],[1,1],[-1,1],[1,-1]].forEach(d => addStep(d[0], d[1]));
+            } else if (type === 'i') { // Inquisitor
+                [[-1,-1],[1,1],[-1,1],[1,-1]].forEach(d => addSlide(d[0], d[1]));
+                [[-1,0],[1,0],[0,-1],[0,1]].forEach(d => addStep(d[0], d[1]));
+            } else if (type === 'g') { // Pegasus
+                [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(d => addStep(d[0], d[1]));
+                [[-3,0],[3,0],[0,-3],[0,3]].forEach(d => addStep(d[0], d[1]));
+            } else if (type === 'm') { // Pikeman
+                const dir = color === 'w' ? -1 : 1;
+                addStep(dir, 0); addStep(dir, -1); addStep(dir, 1);
+            }
+            return moves;
+        }
+
+        function handleClick(r, c) {
+            if (winner) return;
+
+            // Sandbox Logic
+            if (isSandbox) {
+                const p = brushPiece === '' ? '' : (brushColor === 'w' ? brushPiece.toUpperCase() : brushPiece.toLowerCase());
+                board[r][c] = p;
+                renderBoard();
+                syncData({ type: 'boardUpdate', board });
+                return;
+            }
+
+            const piece = board[r][c];
+            const color = piece ? (piece === piece.toUpperCase() ? 'w' : 'b') : null;
+
+            if (selectedSquare) {
+                const move = validMoves.find(m => m.r === r && m.c === c);
+                if (move) {
+                    executeMove(selectedSquare.r, selectedSquare.c, r, c);
+                    return;
+                }
+                if (color === turn) selectSquare(r, c);
+                else { selectedSquare = null; validMoves = []; renderBoard(); }
+            } else {
+                if (color === turn) selectSquare(r, c);
+            }
+        }
+
+        function selectSquare(r, c) {
+            selectedSquare = {r, c};
+            validMoves = getMoves(r, c);
+            const pData = PIECES[board[r][c].toLowerCase()];
+            document.getElementById('intelTitle').textContent = pData.name;
+            document.getElementById('intelBody').textContent = pData.desc;
+            renderBoard();
+        }
+
+        function executeMove(fR, fC, tR, tC) {
+            const piece = board[fR][fC];
+            const target = board[tR][tC];
+
+            if (target.toLowerCase() === 'o') winner = turn === 'w' ? 'White' : 'Black';
+
+            board[tR][tC] = piece;
+            board[fR][fC] = '';
+
+            // Promotion
+            if (piece.toLowerCase() === 'm' && (tR === 0 || tR === 7)) {
+                board[tR][tC] = (turn === 'w' ? 'A' : 'a');
+            }
+
+            turn = turn === 'w' ? 'b' : 'w';
+            selectedSquare = null;
+            validMoves = [];
+            updateStatus();
+            renderBoard();
+
+            syncData({ type: 'move', fR, fC, tR, tC });
+        }
+
+        function renderBoard() {
+            boardEl.innerHTML = '';
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const sq = document.createElement('div');
+                    sq.className = `square ${(r + c) % 2 ? 'dark' : 'light'}`;
+                    
+                    if (selectedSquare?.r === r && selectedSquare?.c === c) sq.classList.add('selected');
+                    const move = validMoves.find(m => m.r === r && m.c === c);
+                    if (move) sq.classList.add(move.cap ? 'valid-capture' : 'valid-move');
+
+                    const p = board[r][c];
+                    if (p) {
+                        const span = document.createElement('span');
+                        const pType = p.toLowerCase();
+                        span.className = `piece ${p === p.toUpperCase() ? 'w' : 'b'} ${['a','o'].includes(pType) ? 'special' : ''}`;
+                        span.textContent = PIECES[pType].sym;
+                        sq.appendChild(span);
+                    }
+                    sq.onclick = () => handleClick(r, c);
+                    boardEl.appendChild(sq);
+                }
+            }
+        }
+
+        function updateStatus() {
+            if (winner) {
+                statusEl.textContent = `👑 ${winner} WINS!`;
+                statusEl.style.borderColor = 'var(--take)';
+            } else {
+                statusEl.textContent = `${turn === 'w' ? 'White' : 'Black'}'s Turn`;
+                statusEl.style.borderColor = varColor(turn);
+            }
+        }
+
+        const varColor = (t) => t === 'w' ? '#fff' : '#666';
+
+        // --- MULTIPLAYER LOGIC (PeerJS) ---
+
+        function hostGame() {
+            peer = new Peer();
+            peer.on('open', id => {
+                const btn = document.getElementById('hostBtn');
+                btn.textContent = "ID: " + id;
+                btn.style.background = "#4ade80";
+                peerStatus.textContent = "Waiting for opponent...";
+                console.log('ID:', id);
+            });
+            peer.on('connection', c => {
+                conn = c;
+                setupConn();
+            });
+        }
+
+        function joinGame() {
+            const id = document.getElementById('joinId').value;
+            peer = new Peer();
+            peer.on('open', () => {
+                conn = peer.connect(id);
+                setupConn();
+            });
+        }
+
+        function setupConn() {
+            conn.on('open', () => {
+                peerStatus.textContent = "Connected to Opponent!";
+                peerStatus.style.color = "#4ade80";
+                if (conn.open) syncData({ type: 'init', board });
+            });
+            conn.on('data', data => {
+                if (data.type === 'init') {
+                    board = data.board || MODES[data.mode];
+                    turn = 'w';
+                    winner = null;
+                } else if (data.type === 'move') {
+                    executeMove(data.fR, data.fC, data.tR, data.tC);
+                    return; // executeMove already renders
+                } else if (data.type === 'boardUpdate') {
+                    board = data.board;
+                }
+                renderBoard();
+                updateStatus();
+            });
+        }
+
+        function syncData(data) {
+            if (conn && conn.open) {
+                conn.send(data);
+            }
+        }
+
+        // --- SANDBOX TOOLS ---
+
+        function toggleSandbox() {
+            isSandbox = document.getElementById('sandboxToggle').checked;
+            document.getElementById('sandboxTools').style.display = isSandbox ? 'block' : 'none';
+            selectedSquare = null;
+            validMoves = [];
+            renderBoard();
+        }
+
+        function setBrush(p) {
+            brushPiece = p;
+            document.querySelectorAll('.armory-item').forEach(i => i.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+        }
+
+        function toggleBrushColor() {
+            brushColor = brushColor === 'w' ? 'b' : 'w';
+            document.getElementById('colorIndicator').innerHTML = `<span>${brushColor.toUpperCase()}</span><br><small>Color</small>`;
+        }
+
+        initGame();
+    </script>
+</body>
+</html>
